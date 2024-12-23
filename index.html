@@ -5,6 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Relatório - Sistema de Microsserviços</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/themes/prism.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/themes/prism-okaidia.min.css" rel="stylesheet" />
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -47,6 +49,15 @@
         .section {
             margin-bottom: 30px;
         }
+
+        pre[class*="language-"] {
+            border-radius: 4px;
+            margin: 1em 0;
+        }
+        
+        code[class*="language-"] {
+            font-size: 14px;
+        }
     </style>
 </head>
 
@@ -64,17 +75,6 @@
                     Store, Exchange e Fidelity. Cada microsserviço é responsável por uma funcionalidade específica, e as
                     requisições são
                     executadas utilizando REST.</p>
-            </ul>
-        </div>
-
-        <div class="section">
-            <h2>2. Arquitetura</h2>
-            <ul>
-                <li>Gateway API</li>
-                <li>Serviço de Autenticação</li>
-                <li>Serviço de Usuários</li>
-                <li>Serviço de Produtos</li>
-                <li>Serviço de Pedidos</li>
             </ul>
         </div>
 
@@ -135,44 +135,174 @@
         <h2>6. Estratégias de Tolerância a Falhas</h2>
         <ul>
             <h3>Omission</h3>
-            <p><strong>Estratégia:</strong> ... </p>
-            <p><strong>Implementação:</strong> ... </p>
-            <p><strong>Limitações:</strong> ... </p>
+            <p><strong>Estratégia:</strong> Cache mais recente do produto. </p>
+            <p><strong>Implementação:</strong> Na classe StoreService, do microsserviço ecommerce, foi implementado um método para retornar o cache mais recente do produto utilizando as anotações retry, que você configura a quantidade de vezes que você pode voltar e implementa o fallback, na nossa configuração ele tenta voltar a primeira vez e já vai para o fallback, e o cacheable, onde você informa quais são as variáveis que você quer salvar pra deixar de cache, e quando a request retorna sucesso, ele salva o resultado pra usar de cache. O fallback implementado é recuperar o produto pelo id que foi passado como parâmetro no cache.  </p>
+
+
+            <div class="section">
+                <h2>Código</h2>
+                <pre><code class="language-java">
+                    @Service
+                    @EnableCaching
+                    public class StoreService {
+                    
+                        @Autowired
+                        private Store storeClient;
+                    
+                        @Autowired
+                        private RedisTemplate<String, String> redisTemplate;
+                    
+                        private static final Logger logger = LoggerFactory.getLogger(StoreService.class);
+                    
+                        private final ObjectMapper objectMapper = new ObjectMapper();
+                    
+                        @Retry(name = "store", fallbackMethod = "productFallback")
+                        @Cacheable(value = "products", key = "#id")
+                        public ProductDTO productDetails(long id) {
+                            return storeClient.getProduct(id);
+                        }
+
+                        public ProductDTO productFallback(long id, Throwable throwable) {
+                            logger.error(" Usando fallback cache para o produto {}", id, throwable);
+                    
+                            String cacheKey = "products::" + id;
+                            String cachedProduct = redisTemplate.opsForValue().get(cacheKey);
+                    
+                            if (cachedProduct != null) {
+                                try {
+                                    return objectMapper.readValue(cachedProduct, ProductDTO.class);
+                                } catch (Exception e) {
+                                    logger.error("Erro ao desserializar produto do cache", e);
+                                    throw new IllegalStateException("Erro ao desserializar produto do cache", e);
+                                }
+                            } else  {
+                                throw new IllegalStateException("Produto não encontrado no cache para ID: " + id);
+                            }
+                        }
+                        
+                        // outros métodos que serão mostrados em breve
+                    }
+                </code></pre>
+            </div> 
+
+            <p><strong>Limitações:</strong> Quando em nenhum momento, a requisição retornar ok e a falha aparecer de imediato. O cache estará vazio e retornará um erro para o usuário.</p>
+            
 
             <h3>Crash</h3>
-            <p><strong>Estratégia:</strong> ... </p>
-            <p><strong>Implementação:</strong> ... </p>
-            <p><strong>Limitações:</strong> ... </p>
+            <p><strong>Estratégia:</strong>Cache mais recente do valor retornado pelo Exchange.</p>
+            <p><strong>Implementação:</strong> Na classe ExchangeService, do microsserviço ecommerce, foi implementado um método para retornar o cache do valor mais recentemente retornado, utilizando a anotação retry, que você configura a quantidade de vezes que você pode voltar e implementa o fallback, na nossa configuração ele tenta voltar a primeira vez e já vai para o fallback. O fallback implementado é recuperar o valor mais recente retornado pela request.</p>
+            <div class="section">
+                <h2>Código</h2>
+                <pre><code class="language-java">
+                    @Service
+    public class ExchangeService {
+
+    @Autowired
+    private Exchange exchangeClient;
+
+    @Autowired
+    private CacheManager cacheManager;
+
+    @Autowired
+    private RedisTemplate<String, String> redisTemplate;
+
+    private static final Logger logger = LoggerFactory.getLogger(ExchangeService.class);
+
+    @Retry(name = "exchange", fallbackMethod = "cacheFallback")
+    public double getRate() {
+        ExchangeDTO exchange = exchangeClient.getExchange();
+        redisTemplate.opsForValue().set("exchange", Double.toString(exchange.getRate()));
+
+        return exchange.getRate();
+    }
+
+    public double cacheFallback(Throwable throwable) {
+        try {
+            String cache = redisTemplate.opsForValue().get("exchange");
+            if (cache != null) {
+                return Double.parseDouble(cache);
+            } else {
+                throw new IllegalStateException("No value found in cache for 'exchange'");
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("Error accessing cache: " + e.getMessage(), e);
+        }
+    }
+}
+                </code></pre>
+            </div> 
+            <p><strong>Limitações:</strong> Quando em nenhum momento, a requisição retornar ok e a falha aparecer de imediato. O cache estará vazio e retornará um erro para o usuário. </p>
 
             <h3>Error</h3>
-            <p><strong>Estratégia:</strong> ... </p>
-            <p><strong>Implementação:</strong> ... </p>
-            <p><strong>Limitações:</strong> ... </p>
+            <p><strong>Estratégia:</strong> Falha Graciosa, indicando para o usuário que houve uma falha esperada no sistema.</p>
+            <p><strong>Implementação:</strong> Implementação do método de fallback para retornar a mensagem de erro para o usuário.</p>
+
+            <div class="section">
+                <h2>Código</h2>
+                <pre><code class="language-java">
+                    @Service
+                    @EnableCaching
+                    public class StoreService {
+                    
+                        @Autowired
+                        private Store storeClient;
+                    
+                        @Autowired
+                        private RedisTemplate<String, String> redisTemplate;
+                    
+                        private static final Logger logger = LoggerFactory.getLogger(StoreService.class);
+                    
+                        private final ObjectMapper objectMapper = new ObjectMapper();
+                    
+                        @Retry(name = "store", fallbackMethod = "transactionFallback")
+                        public TransactionDTO processSell(long id) {
+                   
+                                return storeClient.createSell(id);     
+                        }
+                    
+                        public TransactionDTO  transactionFallback(long id, Throwable throwable) {
+                            logger.error("Erro ao finalizar a transação para o ID {}.Detalhes:  ", id, throwable);
+                    
+                            throw new TransactionProcessingException("Não foi possível processar a venda com ID: " + id, throwable);
+                        }
+                    }
+                </code></pre>
+            </div> 
+
+            <p><strong>Limitações:</strong> O usuário fica ciente do erro, mas não tem nenhuma informação sobre o que será feito com a request dele.</p>
 
             <h3>Timeout</h3>
-            <p><strong>Estratégia:</strong> ... </p>
-            <p><strong>Implementação:</strong> ... </p>
-            <p><strong>Limitações:</strong> ... </p>
-        </ul>
-    </div>
+            <p><strong>Estratégia:</strong> Registrar no log e processar quando possível </p>
+            <p><strong>Implementação:</strong> É implementado uma função de fallback, o RabbitMQ é acionando para colocar a request na fila de execução, é criado um consumidor para ficar acessando até ter uma resposta positiva e é registrado o log que houve o erro. </p>
+            div class="section">
+                <h2>Código</h2>
+                <pre><code class="language-java">
+                    @Service
+                    public class FidelityService {
 
-    <div class="section"></div>
-        <h2>6. Benefícios Alcançados</h2>
-        <ul>
-            <li>Alta disponibilidade</li>
-            <li>Escalabilidade independente</li>
-            <li>Facilidade de manutenção</li>
-            <li>Melhor isolamento de falhas</li>
-            <li>Visibilidade das falhas</li>
-        </ul>
-    </div>
+                        @Autowired
+                        private Fidelity fidelityClient;
 
-    <div class="section">
-        <h2>7. Desafios e Soluções</h2>
-        <ul>
-            <li>Consistência de dados: Implementação de Saga Pattern</li>
-            <li>Monitoramento: Utilização de ELK Stack</li>
-            <li>Rastreamento: Implementação de Distributed Tracing</li>
+                        @Autowired
+                        private RabbitTemplate rabbitTemplate;
+
+                        private static final Logger logger = LoggerFactory.getLogger(FidelityService.class);
+
+                        @Retry(name = "fidelity", fallbackMethod = "queueFallback")
+                        public void processBonus(long userId, double value){
+                            fidelityClient.sendBonus(userId, value);
+                        }
+
+                        public void queueFallback(long userId, double value, Throwable t) {
+                            FidelityDTO request = new FidelityDTO(userId, value);
+                            logger.error("Failed to process bonuses for user {}, reprocessing in the background", userId);
+                            rabbitTemplate.convertAndSend("bonusQueue", request);
+                        }
+                    }
+                </code></pre>
+            </div> 
+
+            <p><strong>Limitações:</strong> Caso o sistema não volte, há a ocorrência de um loop infinito. </p>
         </ul>
     </div>
 
@@ -182,20 +312,17 @@
     </div>
 
     <div class="section"></div>
-        <h2>10. Repositórios GitHub</h2>
+        <h2>10. Links</h2>
         <ul>
-            <a href="https://github.com/grt-system/exchange">exchange</a>
+            <a href="https://github.com/grt-system">GRT-SYSTEM</a>
             <br>
-            <a href="https://github.com/grt-system/ecommerce">ecommerce</a>
-            <br>
-            <a href="https://github.com/grt-system/store">store</a>
-            <br>
-            <a href="https://github.com/grt-system/fidelity">fidelity</a>
-            <br>
-            <a href="https://github.com/grt-system/grt-system.github.io">grt-system.github.io</a>
         </ul>
     </div>
+
+    
     </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/components/prism-java.min.js"></script>
 </body>
 
 </html>
