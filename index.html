@@ -274,7 +274,8 @@
             <h3>Timeout</h3>
             <p><strong>Estratégia:</strong> Registrar no log e processar quando possível </p>
             <p><strong>Implementação:</strong> É implementado uma função de fallback, o RabbitMQ é acionando para colocar a request na fila de execução, é criado um consumidor para ficar acessando até ter uma resposta positiva e é registrado o log que houve o erro. </p>
-            div class="section">
+            
+            <div class="section">
                 <h2>Código</h2>
                 <pre><code class="language-java">
                     @Service
