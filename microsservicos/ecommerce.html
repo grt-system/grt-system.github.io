@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ecommerce</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/themes/prism.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/themes/prism-okaidia.min.css" rel="stylesheet" />
+    <link href="../style.css" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container">
+        <h1>Microsserviço Ecommerce</h1>
+
+        <div class="section">
+            <h2>1. Visão Geral</h2>
+            <p>O microsserviço Ecommerce é o componente central do sistema, responsável por:
+            </p>
+            <ul>
+                <li>Gerenciar as transações de compra</li>
+                <li>Coordenar a comunicação com outros microsserviços</li>
+                <li>Implementar estratégias de tolerância a falhas</li>
+                <li>Garantir a consistência das operações</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>2. Arquitetura</h2>
+            <p>O serviço é construído utilizando:</p>
+            <ul>
+                <li>Spring Boot</li>
+                <li>Redis para cache</li>
+                <li>RabbitMQ para gerenciar as filas de execução</li>
+                <li>Hystrix para tolerância a falhas</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>3. Endpoints Principais</h2>
+            <pre><code class="language-yaml">
+
+
+POST /ecommerce/buy
+    - Processa uma nova compra
+
+            </code></pre>
+        </div>
+
+        <div class="section">
+            <h2>4. Tratamento de Falhas</h2>
+            
+            <h3>4.1 Omission - Produtos</h3>
+            <pre><code class="language-java">
+@Service
+@EnableCaching
+public class StoreService {
+    @Retry(name = "store", fallbackMethod = "productFallback")
+    @Cacheable(value = "products", key = "#id")
+    public ProductDTO productDetails(long id) {
+        return storeClient.getProduct(id);
+    }
+}
+            </code></pre>
+
+            <h3>4.2 Crash - Exchange</h3>
+            <pre><code class="language-java">
+@Service
+public class ExchangeService {
+    @Retry(name = "exchange", fallbackMethod = "cacheFallback")
+    public double getRate() {
+        ExchangeDTO exchange = exchangeClient.getExchange();
+        redisTemplate.opsForValue().set("exchange", 
+            Double.toString(exchange.getRate()));
+        return exchange.getRate();
+    }
+}
+            </code></pre>
+
+            <h3>4.3 Error - Transações</h3>
+            <pre><code class="language-java">
+@Service
+public class TransactionService {
+    @Retry(name = "transaction", fallbackMethod = "transactionFallback")
+    public TransactionDTO processSell(long id) {
+        return storeClient.createSell(id);
+    }
+}
+            </code></pre>
+
+            <h3>4.4 Timeout - Fidelidade</h3>
+            <pre><code class="language-java">
+@Service
+public class FidelityService {
+    @Retry(name = "fidelity", fallbackMethod = "queueFallback")
+    public void processBonus(long userId, double value) {
+        fidelityClient.sendBonus(userId, value);
+    }
+}
+            </code></pre>
+        </div>
+
+        <div class="section">
+            <h2>5. Configurações</h2>
+            <pre><code class="language-yaml">
+resilience4j:
+  retry:
+    instances:
+      store:
+        maxAttempts: 2
+        waitDuration: 1s
+      exchange:
+        maxAttempts: 2
+        waitDuration: 1s
+      fidelity:
+        maxAttempts: 2
+        waitDuration: 5s
+
+spring:
+  cache:
+    type: redis
+  redis:
+    host: localhost
+    port: 6379
+            </code></pre>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/components/prism-java.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/components/prism-yaml.min.js"></script>
+</body>
+
+</html>
+   
