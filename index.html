@@ -25,6 +25,25 @@
                     Store, Exchange e Fidelity. Cada microsserviço é responsável por uma funcionalidade específica, e as
                     requisições são
                     executadas utilizando REST.</p>
+                    <p>As estratégias adotadas para tolerância das falhas foram implementadas nos services referentes a cada serviço,
+                        no geral é feito uma chamada para o microsservico usando feing client, e se essa chamada der erro o 
+                        fallbackMethod implementado será chamado, cada chamada tem seu método fallback definido, a anotação retry é usada 
+                        para definir o número de tentativas que vai ser 1(única tentativa) e para definir o fallbackMethod, exemplo 
+                        na chamada para o microsservice fidelity que processa o bônus:</p>
+       
+                       <pre><code class="language-java">
+@Retry(name = "fidelity", fallbackMethod = "queueFallback")
+public void processBonus(long userId, double value){
+    fidelityClient.sendBonus(userId, value);
+}
+                       
+public void queueFallback(long userId, double value, Throwable t) {
+    FidelityDTO request = new FidelityDTO(userId, value);
+    logger.error("Failed to process bonuses for user {}, reprocessing in the background", userId);
+    rabbitTemplate.convertAndSend("bonusQueue", request);
+}
+                       </code></pre>
+               </div>
             </ul>
         </div>
 
@@ -32,10 +51,13 @@
             <h2>2. Tecnologias Utilizadas</h2>
             <ul>
                 <li>Docker para containerização</li>
-                <li>Kubernetes para orquestração</li>
                 <li>Spring Boot para desenvolvimento dos serviços</li>
                 <li>MySQL para banco de dados</li>
                 <li>RabbitMQ para mensageria</li>
+                <li>Redis para cache</li>
+                <li>resilience4j</li>
+                <li>Feign Client para comunicação entre os microsservicos</li>
+                <li>SLF4J logger</li>
             </ul>
         </div>
     
@@ -96,8 +118,8 @@
         <h2>5. Estratégias de Tolerância a Falhas</h2>
         <ul>
             <h3>Omission</h3>
-            <p><strong>Estratégia:</strong> Cache mais recente do produto. </p>
-            <p><strong>Implementação:</strong> Na classe StoreService, do microsserviço ecommerce, foi implementado um método para retornar o cache mais recente do produto utilizando as anotações retry, que você configura a quantidade de vezes que você pode voltar e implementa o fallback, na nossa configuração ele tenta voltar a primeira vez e já vai para o fallback, e o cacheable, onde você informa quais são as variáveis que você quer salvar pra deixar de cache, e quando a request retorna sucesso, ele salva o resultado pra usar de cache. O fallback implementado é recuperar o produto pelo id que foi passado como parâmetro no cache.  </p>
+            <p><strong>Estratégia:</strong> Busca no cache o produto pela chave products::{id}. </p>
+            <p><strong>Implementação:</strong> Na classe StoreService, do microsserviço ecommerce, foi implementado um método para retornar o cache mais recente do produto utilizando as anotações retry, que você configura a quantidade de vezes que você pode voltar e implementa o fallback, na nossa configuração ele tenta voltar a primeira vez e já vai para o fallback, e o cacheable onde você informa quais são as variáveis que você quer salvar pra deixar de cache que no caso é o produto, e quando a request retorna sucesso, ele salva o resultado pra usar de cache. O fallback implementado é recuperar o produto pelo id que foi passado como parâmetro no cache.  </p>
 
 
             <div class="section">
@@ -150,12 +172,12 @@
             
 
             <h3>Crash</h3>
-            <p><strong>Estratégia:</strong>Cache mais recente do valor retornado pelo Exchange.</p>
-            <p><strong>Implementação:</strong> Na classe ExchangeService, do microsserviço ecommerce, foi implementado um método para retornar o cache do valor mais recentemente retornado, utilizando a anotação retry, que você configura a quantidade de vezes que você pode voltar e implementa o fallback, na nossa configuração ele tenta voltar a primeira vez e já vai para o fallback. O fallback implementado é recuperar o valor mais recente retornado pela request.</p>
+            <p><strong>Estratégia:</strong>Buscar no cache mais recente o ultimo valor retornado pelo Exchange.</p>
+            <p><strong>Implementação:</strong> Na classe ExchangeService, do microsserviço ecommerce, foi implementado um método para retornar o cache do valor mais recentemente retornado, utilizando a anotação retry, que você configura a quantidade de vezes que você pode voltar e implementa o fallback, na nossa configuração ele tenta voltar a primeira vez e já vai para o fallback em caso de erro. O fallback implementado é recuperar o valor mais recente retornado pela request.</p>
             <div class="section">
                 <h2>Código</h2>
                 <pre><code class="language-java">
-                    @Service
+    @Service
     public class ExchangeService {
 
     @Autowired
@@ -233,8 +255,8 @@
             <p><strong>Limitações:</strong> O usuário fica ciente do erro, mas não tem nenhuma informação sobre o que será feito com a request dele.</p>
 
             <h3>Timeout</h3>
-            <p><strong>Estratégia:</strong> Registrar no log e processar quando possível </p>
-            <p><strong>Implementação:</strong> É implementado uma função de fallback, o RabbitMQ é acionando para colocar a request na fila de execução, é criado um consumidor para ficar acessando até ter uma resposta positiva e é registrado o log que houve o erro. </p>
+            <p><strong>Estratégia:</strong> Registrar no log e adicionar a fila para processar quando possível </p>
+            <p><strong>Implementação:</strong> É implementado uma função de fallback, nela o RabbitMQ é acionando para colocar a request na fila de execução, é criado um consumidor para ficar enviado a request ao fidelity até ter uma resposta positiva e é registrado o log que houve o erro. </p>
 
             <div class="section">
                 <h2>Código</h2>
@@ -266,21 +288,62 @@
 
             <p><strong>Limitações:</strong> Caso o sistema não volte, há a ocorrência de um loop infinito. </p>
         </ul>
+
+
+        <h3>Service sell</h3>
+        <p>SellService é onde foi implementado os metodos que verica se o parametro ft esta ativado ou nao a tolerância a falhas, apenas recebendo os parametros e chamanto o metodo createSellFall no caso da tolerancia estar desativada, ou seja ft tiver o valor de false</p>
+        <pre><code class="language-java">
+            public TransactionDTO createSell(long productId, long userId, boolean ft) {
+                if(ft) {
+                    ProductDTO product = storeService.productDetails(productId); // Detalhes do produto
+                    double total = conversion(product.getValue());  // Pegar cotação
+                    TransactionDTO transactionDTO = storeService.processSell(productId); // Processar compra
+                    fidelityService.processBonus(userId, total); // Processa bonus
+        
+                    return transactionDTO;
+                } else {
+                    return createSellFall(productId,  userId, ft);
+                }
+            }
+        
+            public TransactionDTO createSellFall(long productId, long userId, boolean ft) {
+                try {
+                    ProductDTO product = storeClient.getProduct(productId); // Detalhes do produto
+                    ExchangeDTO exchange = exchangeClient.getExchange(); // Pegar cotação
+                    TransactionDTO transactionDTO = storeClient.createSell(productId); // Processar compra
+                    double total = exchange.getRate() * product.getValue();;
+                    fidelityClient.sendBonus(userId, total); // Criar bonus
+        
+                    return transactionDTO;
+                } catch (RuntimeException e) {
+                    logger.error("ERRO PROCESS{}", e.getMessage(), e);
+                    throw new RuntimeException(e);
+                }
+            }
+        
+            private double conversion(double value)  {
+                double rate = exchangeService.getRate();
+                return value * rate;
+            }            
+        </code></pre>
     </div>
 
     <div class="section"></div>
         <h2>6. Testes</h2>
-
+        <ul>
+            <a href="https://docs.google.com/document/d/1BywZJgUh0S8cCPQRY1kRVMG0iFf3yoO3-X0ZerzYrr0/edit?usp=sharing" target="_blank">Relatorio de testes</a>
+            <br>
+        </ul>
     </div>
 
     <div class="section"></div>
         <h2>7. Links</h2>
         <ul>
-            <a href="https://github.com/grt-system" target="_blank">GRT-SYSTEM</a>
+            <a href="https://github.com/grt-system" target="_blank">Repositorios GRT-SYSTEM</a>
             <br>
         </ul>
         <ul>
-            <a href="https://drive.google.com/drive/folders/1WW6oykJBHj1SsHN8ZiJMslFqNgBwDS-9" target="_blank">vídeo</a>
+            <a href="https://drive.google.com/drive/folders/1WW6oykJBHj1SsHN8ZiJMslFqNgBwDS-9" target="_blank">Video parte 1</a>
             <br>
         </ul>
     </div>
