@@ -326,6 +326,52 @@ public void queueFallback(long userId, double value, Throwable t) {
                 return value * rate;
             }            
         </code></pre>
+        <h3>Configurações</h3>
+        <h4>Resilience4j</h4>
+        <p> Definir o máximo de tentativas para 1 </p>
+        <pre><code class="language-java">
+#RESILIENCE
+resilience4j.retry.configs.default.maxAttempts=1
+resilience4j.retry.instances.fidelity.maxAttempts=1
+resilience4j.retry.instances.store.maxAttempts=1
+resilience4j.retry.instances.exchange.maxAttempts=1 
+        </code></pre>
+        <h4>FEIGN</h4>
+        <p>Para o cliente definimos o tempo de timeout e read para 1s</p>
+        <pre><code class="language-java">
+#FEIGN
+spring.cloud.openfeign.client.config.default.readTimeout=1000
+spring.cloud.openfeign.client.config.default.connectTimeout=1000
+        </code></pre>
+        <h4>Cache Redis</h4>
+        <p>Para o cache foi configurado o redis. Definimos o tempo de expiração do cache para 1h</p>
+        <pre><code class="language-java">
+#REDIS
+spring.data.redis.host=redis
+spring.data.redis.port=6379
+spring.cache.type=redis
+spring.cache.redis.time-to-live=3600000
+logging.level.org.springframework.data.redis=DEBUG
+logging.level.org.springframework.cache=DEBUG
+    </code></pre>
+    <h4>Configuração RabbitMQ</h4>
+    <p>Para o gerenciamento assíncrono de filas foi usado o rabbitmq.</p>
+    <pre><code class="language-java">
+#RABBITMQ
+spring.rabbitmq.host=rabbitmq
+spring.rabbitmq.port=5672
+spring.rabbitmq.username=user
+spring.rabbitmq.password=password
+spring.rabbitmq.listener.simple.default-requeue-rejected=false
+spring.rabbitmq.listener.simple.acknowledge-mode=auto
+spring.rabbitmq.listener.simple.retry.enabled=true
+spring.rabbitmq.listener.simple.retry.max-attempts=50
+spring.rabbitmq.listener.simple.retry.initial-interval=600000
+spring.rabbitmq.listener.simple.retry.multiplier=1.0
+spring.rabbitmq.listener.simple.retry.max-interval=100000000
+spring.amqp.deserialization.trust.all=true
+logging.level.org.springframework.amqp=DEBUG
+</code></pre>
     </div>
 
     <div class="section"></div>
@@ -344,6 +390,10 @@ public void queueFallback(long userId, double value, Throwable t) {
         </ul>
         <ul>
             <a href="https://drive.google.com/drive/folders/1WW6oykJBHj1SsHN8ZiJMslFqNgBwDS-9" target="_blank">Video parte 1</a>
+            <br>
+        </ul>
+        <ul>
+            <a href="https://drive.google.com/drive/folders/1WW6oykJBHj1SsHN8ZiJMslFqNgBwDS-9" target="_blank">Video parte 2</a>
             <br>
         </ul>
     </div>
